@@ -17,6 +17,7 @@ nodes/CheckmkConnector/
   execute/executeCatalogOperation.ts             catalog operation -> request
   execute/executeCustomOperation.ts              Custom API resource
   live/liveStatus.ts                             Live Status helpers
+  monitoring/monitoring.ts                       Monitoring resource (acknowledge, downtime)
   ui/buildProperties.ts                          n8n parameter generation
 scripts/generate-catalog.mjs                     OpenAPI -> catalog + docs generator
 ```
@@ -38,7 +39,7 @@ For every path/method pair the generator records:
 | --- | --- |
 | `id` | OpenAPI `operationId` |
 | `resource` | first tag, slugified (`host_config` → `hosts`) with a human label |
-| `label` | `"<METHOD> <summary>"`, `" (deprecated)"` appended when `deprecated: true` |
+| `label` | humanized summary: verb prefixes mapped (`Show all` → `Get Many`), articles dropped, title-cased, then the resource noun removed (`Create Host` → `Create`) via the `RESOURCE_NOUNS` table; plural reads become `Get Many`, labels whose noun cannot be dropped cleanly keep it, colliding active labels fall back to the full summary, `" (deprecated)"` is appended when `deprecated: true`, `" (METHOD)"` when two operations of a resource still collide |
 | `method`, `path` | operation verb and path template |
 | `pathParameters`, `queryParameters`, `headerParameters` | OpenAPI parameters, with kind, type, enum values, required flag, description, example and schema default |
 | `requestBody` | required flag, schema `$ref` name, first example (resolved through `components/schemas` when the example is schema-generated) |
@@ -47,7 +48,8 @@ For every path/method pair the generator records:
 | `deprecated` | OpenAPI `deprecated` |
 
 The generator drops `Content-Type`, `Accept` and `Authorization` header parameters because the
-transport owns them. Operation IDs must be unique; generation fails otherwise. Running the
+transport owns them, and the `site`/`sites` query parameters because the credential **Site**
+already scopes the request URL. A site can never be selected per operation. Operation IDs must be unique; generation fails otherwise. Running the
 generator is deterministic for a given document, so a regeneration diff is reviewable.
 
 The current catalog: 189 operations, 40 resources, 32 paginated, 20 ETag-protected, 3
@@ -59,6 +61,7 @@ deprecated.
 
 - `customApi` → `executeCustomOperation`
 - `liveStatus` → `getHost` / `getHosts` / `getServices` / `getProblems`
+- `monitoring` → `acknowledgeProblem` / `getHostServices` / `scheduleDowntime`
 - anything else → the catalog operation with a matching `operation` id
 
 Results are wrapped: arrays are split into one n8n item per element, scalars are emitted as
@@ -140,6 +143,18 @@ Status collections do not emit `next` links, so `returnAll` does not page status
 request returns every match. For `getHosts` it pages the host configuration listing, and the
 joined output is only truncated by `limit` when **Return All** is off.
 
+Catalog operations `host_config.show_host` and `host_config.list_hosts` reuse the same bulk
+status request: `attachHostStatus` fetches the configured host columns, joins by
+`extensions.name` (falling back to `id`) and appends `host_status` (`null` when missing) without
+touching the configuration maps. The **Include Live Status** field, default on, controls it.
+
+### Response shaping
+
+**Extension Attributes** is a comma-separated list applied to the output of every operation.
+`keepAttributes` walks each emitted row and, inside any `attributes` or `effective_attributes`
+map, keeps only the listed names; arrays are preserved and an empty list returns the row
+untouched. The filter never adds keys and never rewrites the surrounding structure.
+
 ### Checkmk older than 2.4
 
 The version probe runs once per workflow and feeds a legacy adapter:
@@ -153,23 +168,54 @@ The version probe runs once per workflow and feeds a legacy adapter:
 - The 2.4 catalog remains the single source of truth; UI examples are never used as field
   defaults, so unset parameters are not sent.
 
+## Monitoring resource
+
+Three curated operations cover alert triage and maintenance without exposing raw OpenAPI
+fields. All of them are available on Checkmk 2.2 and newer; none of them is generated from the
+catalog.
+
+| Operation | Request |
+| --- | --- |
+| `acknowledgeProblem` | `POST /domain-types/acknowledge/collections/{host|service}` |
+| `getHostServices` | `POST /domain-types/service/collections/all`, `GET` before 2.4 |
+| `scheduleDowntime` | `POST /domain-types/downtime/collections/{host|service}` |
+
+- `acknowledgeProblem` sends `acknowledge_type` (the **Target**), `host_name`, `comment`,
+  `sticky`, `persistent` and `notify`; `service_description` is added for service targets and
+  `expire_on` only when **Expire On** is set.
+- `scheduleDowntime` sends `downtime_type`, `host_name`, `start_time`, `end_time`,
+  `service_descriptions` for service targets, and `comment` when supplied.
+- `getHostServices` reuses the Live Status transport (including the pre-2.4 `GET` fallback) and
+  flattens each row through `normalizeStatusItem`. Its filter is either
+  `{"op":"=","left":"host_name","right":"<host>"}` or, with **Only Problems**,
+  `{"op":"and","expr":[<host filter>,{"op":"!=","left":"state","right":"0"}]}` — Checkmk
+  rejects an `and` node built from `left`/`right`.
+- Both write operations answer with HTTP 204 and no body, so the handler returns `{}` and the
+  node emits one empty item.
+
 ## Custom API resource
 
 `executeCustomOperation` accepts any method (GET/POST/PUT/PATCH/DELETE), a path relative to the
-API base, a query object, headers and a JSON body.
+API base, a query object, headers and a body serialized as JSON, form URL-encoded or text.
 
 - Paths must start with `/`; protocol-relative paths, schemes and drive-letter prefixes are
   rejected, so the request can never leave the configured site.
 - `Authorization`, `Host`, `Content-Length` and `Cookie` headers are rejected (case-insensitive)
   because the credential or transport owns them.
-- Bodies are JSON objects only and are skipped for `GET`/`DELETE`.
+- **Body Content Type** selects the serializer: `application/json` requires an object or array,
+  `application/x-www-form-urlencoded` flattens an object into `URLSearchParams` (array values
+  repeat the key), `text/plain` sends the JSON string value as-is. Bodies are skipped for
+  empty values and for `GET`/`DELETE`.
+- **Response Format** `text` sends `Accept: */*`, sets `encoding: text` and returns the raw
+  string; `json` keeps the parsed body.
 - **Return Full Response** returns `{statusCode, headers, body}`.
 
 ## Testing
 
 - `npm test` builds and runs unit tests against `dist/` with `node:test`:
   catalog invariants, URL building, header/body handling, error mapping, pagination guards,
-  live status joins, deprecated-endpoint avoidance.
+  live status joins, deprecated-endpoint avoidance, generated operation labels, and the
+  Monitoring request shapes.
 - `npm run test:integration` additionally exercises a real site when
   `CHECKMK_BASE_URL`, `CHECKMK_SITE`, `CHECKMK_USERNAME` and `CHECKMK_PASSWORD` are set. It
   creates a folder and host, activates changes, verifies ETag conflict handling (412), reads
@@ -184,5 +230,6 @@ CHECKMK_OPENAPI_URL=https://checkmk.example.com/production/check_mk/api/1.0/open
 npm run build && npm run lint && npm test
 ```
 
-Review the diff of `operations.generated.ts` and `docs/operations.md`, then bump the package
-version and add a `CHANGELOG.md` entry.
+Review the diff of `operations.generated.ts` and `docs/operations.md`, then submit the verified
+regeneration in a Conventional Commit pull request. After CI passes and it merges to `main`,
+`publish.yml` derives the release. Do not bump the package version or add a changelog entry by hand.

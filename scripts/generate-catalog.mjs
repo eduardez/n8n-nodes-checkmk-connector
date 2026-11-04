@@ -8,6 +8,10 @@ const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
 const SUPPORTED_VERSION = '1.0';
 const MAX_DESCRIPTION = 240;
 const IGNORED_HEADERS = new Set(['content-type', 'accept', 'authorization']);
+// The site is part of the credential and therefore of the base URL; a per-call
+// site filter would only contradict it.
+const IGNORED_QUERY = new Set(['site', 'sites']);
+const ignoredQuery = name => IGNORED_QUERY.has(String(name).toLowerCase());
 
 function argValue(name) {
 	const idx = process.argv.indexOf(name);
@@ -189,6 +193,170 @@ function toParameter(parameter, resolver, kind) {
 	return result;
 }
 
+const ACRONYM_CASING = {
+	api: 'API',
+	bi: 'BI',
+	csrs: 'CSRs',
+	http: 'HTTP',
+	https: 'HTTPS',
+	json: 'JSON',
+	ldap: 'LDAP',
+	pem: 'PEM',
+	rest: 'REST',
+	url: 'URL',
+	uuid: 'UUID',
+};
+const SMALL_WORDS = new Set([
+	'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from',
+	'in', 'into', 'of', 'on', 'or', 'the', 'to', 'with',
+]);
+const ARTICLES = new Set(['a', 'an', 'the']);
+// Longest/most specific prefix first.
+const VERB_PREFIXES = [
+	['show all', 'Get Many'],
+	['show', 'Get'],
+	['get all', 'Get Many'],
+	['get', 'Get'],
+	['list existing', 'List'],
+	['list', 'List'],
+	['bulk create', 'Bulk Create'],
+	['bulk update', 'Bulk Update'],
+	['bulk delete', 'Bulk Delete'],
+	['create/clone', 'Create'],
+	['create', 'Create'],
+	['delete', 'Delete'],
+	['update', 'Update'],
+	['edit', 'Update'],
+	['modify', 'Update'],
+	['move', 'Move'],
+	['rename', 'Rename'],
+	['link', 'Link'],
+	['register', 'Register'],
+	['remove', 'Remove'],
+	['set', 'Set'],
+	['activate', 'Activate'],
+	['archive', 'Archive'],
+	['change', 'Change'],
+	['execute', 'Execute'],
+	['start', 'Start'],
+	['run', 'Run'],
+	['fetch', 'Fetch'],
+	['search', 'Search'],
+	['call', 'Call'],
+	['download', 'Download'],
+	['display', 'Display'],
+	['login', 'Log In'],
+	['logout', 'Log Out'],
+	['wait', 'Wait'],
+	['save', 'Save'],
+];
+
+function titleCase(text) {
+	return String(text)
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean)
+		.map((token, index) => {
+			const lower = token.toLowerCase();
+			if (index > 0 && SMALL_WORDS.has(lower)) return lower;
+			const key = lower.replace(/[^a-z0-9.+/#]/g, '');
+			if (key !== '' && ACRONYM_CASING[key] !== undefined) {
+				return lower.split(key).join(ACRONYM_CASING[key]);
+			}
+			// Keep words that already carry meaningful casing, e.g. "PEM-encoded".
+			if (/[A-Z]/.test(token.slice(1))) return token;
+			return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+		})
+		.join(' ');
+}
+
+function humanizeSummary(summary) {
+	const text = String(summary).trim().replace(/\.$/, '');
+	const tokens = text.split(/\s+/).filter(Boolean);
+	const withoutArticles = tokens.filter((word, index) => index === 0 || !ARTICLES.has(word.toLowerCase()));
+	const lower = withoutArticles.join(' ').toLowerCase();
+	const prefix = VERB_PREFIXES.find(([verb]) => lower === verb || lower.startsWith(`${verb} `));
+	if (prefix !== undefined) {
+		const [verb, replacement] = prefix;
+		return titleCase(`${replacement} ${withoutArticles.join(' ').slice(verb.length).trim()}`);
+	}
+	return titleCase(withoutArticles.join(' '));
+}
+
+// Per-resource object nouns. Removing the trailing noun keeps labels short inside a
+// resource ("Create Host" -> "Create") without guessing from the summary text.
+const RESOURCE_NOUNS = {
+	acknowledgeProblems: ['host or service problem'],
+	activateChanges: ['pending change'],
+	auditLogs: ['audit log entry'],
+	auxTags: ['auxiliary tag', 'aux tag'],
+	backgroundJobs: ['background job'],
+	brokerConnection: ['peer to peer broker connection'],
+	comments: ['comment'],
+	configurationEntities: ['configuration entity'],
+	configurationEntitiesFolder: ['folder'],
+	configurationEntitiesNotificationParameter: ['notification parameter'],
+	configurationEntitiesPasswordstorePassword: ['passwordstore password'],
+	contactGroups: ['contact group'],
+	downtimes: ['scheduled downtime', 'downtime'],
+	eventConsole: ['event'],
+	folders: ['folder'],
+	hostGroups: ['host group'],
+	hostStatus: ['host'],
+	hostTagGroups: ['host tag group'],
+	hosts: ['host'],
+	hostsInternal: ['host'],
+	lDAPConnections: ['ldap connection'],
+	metrics: ['metric'],
+	notificationRules: ['notification rule'],
+	passwords: ['password'],
+	rules: ['rule'],
+	rulesets: ['rule set', 'ruleset'],
+	serviceGroups: ['service group'],
+	serviceStatus: ['monitored service'],
+	siteManagement: ['site connection'],
+	timePeriods: ['time period'],
+	userRoles: ['user role'],
+	users: ['user'],
+};
+const NOUN_CONNECTORS = new Set(['of', 'in', 'on', 'to', 'for', 'from', 'with', 'by', 'at']);
+const TRAILING_NOISE = new Set(['related', 'existing', 'current']);
+// A label must not end on these once the noun is gone.
+const DANGLING_TAIL = new Set([
+	...NOUN_CONNECTORS, ...TRAILING_NOISE, 'and', 'or', 'new', 'all', 'any', 'this', 'own', 'the',
+]);
+
+function escapePattern(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function pluralize(noun) {
+	return noun.endsWith('y') ? `${noun.slice(0, -1)}ies` : `${noun}s`;
+}
+
+/** Drops the resource noun from a label: "Create Host" -> "Create". */
+function stripResourceNoun(label, resource) {
+	const nouns = RESOURCE_NOUNS[resource];
+	if (nouns === undefined) return {short: label, plural: false};
+	const forms = nouns
+		.flatMap(noun => [{form: pluralize(noun), plural: true}, {form: noun, plural: false}])
+		.sort((a, b) => b.form.length - a.form.length);
+	for (const {form, plural} of forms) {
+		const body = form.split(/\s+/).map(escapePattern).join('\\s+');
+		const pattern = new RegExp(`\\s+(?:(?:${[...NOUN_CONNECTORS].join('|')})\\s+)?${body}$`, 'i');
+		if (!pattern.test(label)) continue;
+		let rest = label.replace(pattern, '').trim();
+		for (const noise of TRAILING_NOISE) {
+			rest = rest.replace(new RegExp(`\\s+${noise}$`, 'i'), '').trim();
+		}
+		if (rest === '') continue;
+		const tail = rest.split(/\s+/).pop().toLowerCase();
+		if (DANGLING_TAIL.has(tail)) continue;
+		return {short: rest, plural};
+	}
+	return {short: label, plural: false};
+}
+
 function buildOperations(document) {
 	const resolver = createSchemaResolver(document.components?.schemas ?? {});
 	const operations = [];
@@ -208,7 +376,7 @@ function buildOperations(document) {
 			seenIds.add(id);
 
 			const tags = Array.isArray(raw.tags) ? raw.tags : [];
-			const resourceLabel = tags[0] ?? 'Undocumented';
+			const resourceLabel = titleCase(String(tags[0] ?? 'Undocumented'));
 			const parameters = [...(pathItem.parameters ?? []), ...(raw.parameters ?? [])];
 			const pathParameters = [];
 			const queryParameters = [];
@@ -218,7 +386,9 @@ function buildOperations(document) {
 				if (parameter.in === 'path') {
 					pathParameters.push(toParameter(parameter, resolver));
 				} else if (parameter.in === 'query') {
-					queryParameters.push(toParameter(parameter, resolver));
+					if (!ignoredQuery(parameter.name)) {
+						queryParameters.push(toParameter(parameter, resolver));
+					}
 				} else if (parameter.in === 'header') {
 					const name = String(parameter.name ?? '').toLowerCase();
 					if (name === 'if-match') {
@@ -271,11 +441,45 @@ function buildOperations(document) {
 		resources.set(operation.resource, operation.resourceLabel);
 	}
 
+	const labels = new Map();
 	for (const operation of operations) {
-		operation.label = `${operation.method} ${operation.summary}`;
-		if (operation.deprecated) {
-			operation.label = `${operation.label} (deprecated)`;
+		const full = humanizeSummary(operation.summary);
+		labels.set(operation, {full, ...stripResourceNoun(full, operation.resource)});
+	}
+	// "Get Host" and "Get Hosts" both lose the noun; the listing keeps its "many".
+	for (const operation of operations) {
+		const entry = labels.get(operation);
+		if (!entry.plural || entry.short !== 'Get') continue;
+		const singularSibling = operations.some(other => {
+			const sibling = labels.get(other);
+			return other !== operation
+				&& other.resource === operation.resource
+				&& sibling.short === 'Get'
+				&& !sibling.plural;
+		});
+		if (singularSibling) entry.short = 'Get Many';
+	}
+	// Two active operations of one resource must not end up with the same label; the
+	// full summary wins for the whole collision group. Deprecated variants are exempt,
+	// their suffix already keeps them apart.
+	for (const resource of new Set(operations.map(operation => operation.resource))) {
+		const byLabel = new Map();
+		for (const operation of operations) {
+			if (operation.resource !== resource || operation.deprecated) continue;
+			const key = labels.get(operation).short;
+			byLabel.set(key, [...(byLabel.get(key) ?? []), operation]);
 		}
+		for (const group of byLabel.values()) {
+			if (group.length < 2) continue;
+			for (const operation of group) {
+				const entry = labels.get(operation);
+				entry.short = entry.full;
+			}
+		}
+	}
+	for (const operation of operations) {
+		const {short} = labels.get(operation);
+		operation.label = operation.deprecated ? `${short} (deprecated)` : short;
 	}
 	const labelCounts = new Map();
 	for (const operation of operations) {
@@ -285,7 +489,7 @@ function buildOperations(document) {
 	for (const operation of operations) {
 		const key = `${operation.resource}\u0000${operation.label}`;
 		if (labelCounts.get(key) > 1) {
-			operation.label = `${operation.label} (${operation.path})`;
+			operation.label = `${operation.label} (${operation.method})`;
 		}
 	}
 

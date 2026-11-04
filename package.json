@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-checkmk-connector",
-  "version": "0.4.1",
+  "version": "0.7.0",
   "description": "Full-featured n8n connector for the Checkmk REST API",
   "keywords": [
     "n8n-community-node-package",
@@ -9,16 +9,19 @@
     "monitoring"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/eduardez/n8n-checkmk-connector",
+  "homepage": "https://github.com/eduardez/n8n-nodes-checkmk-connector#readme",
   "author": {
     "name": "eduardez"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eduardez/n8n-checkmk-connector.git"
+    "url": "git+https://github.com/eduardez/n8n-nodes-checkmk-connector.git"
   },
   "bugs": {
-    "url": "https://github.com/eduardez/n8n-checkmk-connector/issues"
+    "url": "https://github.com/eduardez/n8n-nodes-checkmk-connector/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=20.15"
@@ -50,14 +53,21 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@typescript-eslint/parser": "^8.50.1",
+    "conventional-changelog-conventionalcommits": "10.4.1",
     "eslint": "^8.57.0",
     "eslint-plugin-n8n-nodes-base": "^1.16.4",
     "gulp": "^5.0.0",
     "n8n-workflow": "^1.120.3",
     "prettier": "^3.5.3",
     "rimraf": "^6.0.1",
+    "semantic-release": "25.0.9",
     "typescript": "^5.8.2",
     "yaml": "^2.6.1"
+  },
+  "overrides": {
+    "@semantic-release/release-notes-generator": {
+      "conventional-changelog-writer": "^9.0.0"
+    }
   },
   "peerDependencies": {
     "n8n-workflow": "*"

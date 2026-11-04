@@ -2,9 +2,11 @@ import type {INodeParameters, INodeProperties} from 'n8n-workflow';
 
 import {OPERATIONS, RESOURCES} from '../catalog/operations.generated';
 import type {ApiOperation, ApiParameter} from '../catalog/types';
+import {HOST_CONFIG_STATUS_OPERATIONS} from '../live/liveStatus';
 
 export const LIVE_STATUS_RESOURCE = 'liveStatus';
 export const CUSTOM_API_RESOURCE = 'customApi';
+export const MONITORING_RESOURCE = 'monitoring';
 
 const HOST_COLUMNS = ['name', 'state', 'plugin_output', 'address', 'alias', 'last_check'];
 const SERVICE_COLUMNS = ['host_name', 'description', 'state', 'state_type', 'last_check', 'plugin_output'];
@@ -243,15 +245,23 @@ function operationFields(operation: ApiOperation): INodeProperties[] {
 
 function operationSelector(resource: {value: string; label: string}): INodeProperties {
 	const operations = OPERATIONS.filter(operation => operation.resource === resource.value);
-	const defaultOperation = operations[0].id;
+	const defaultOperation =
+		operations.find(operation => operation.method === 'GET' && !operation.deprecated) ??
+		operations.find(operation => !operation.deprecated) ??
+		operations[0];
+	const defaultOperationId = defaultOperation.id;
 	return {
 		displayName: 'Operation',
 		name: 'operation',
 		type: 'options',
 		noDataExpression: true,
 		displayOptions: {show: {resource: [resource.value]}},
-		options: operations.map(operation => ({name: operation.label, value: operation.id})),
-		default: defaultOperation,
+		options: operations.map(operation => ({
+			name: operation.label,
+			value: operation.id,
+			description: `${operation.method} ${operation.path}`,
+		})),
+		default: defaultOperationId,
 	};
 }
 
@@ -333,14 +343,6 @@ function liveStatusProperties(): INodeProperties[] {
 				'Checkmk live status filter expression as a JSON object; a supplied expression replaces the non-OK default',
 		},
 		{
-			displayName: 'Sites',
-			name: 'sites',
-			type: 'string',
-			default: '',
-			displayOptions: show(['getHost', 'getHosts', 'getServices', 'getProblems']),
-			description: 'Comma-separated site names; leave empty to use every site',
-		},
-		{
 			displayName: 'Include Host Configuration',
 			name: 'includeConfig',
 			type: 'boolean',
@@ -382,6 +384,168 @@ function liveStatusProperties(): INodeProperties[] {
 	];
 }
 
+function monitoringProperties(): INodeProperties[] {
+	const displayOptions = {show: {resource: [MONITORING_RESOURCE]}};
+	const show = (operations: string[], extra: Record<string, string[]> = {}) => ({
+		show: {resource: [MONITORING_RESOURCE], operation: operations, ...extra},
+	});
+
+	return [
+		{
+			displayName: 'Operation',
+			name: 'operation',
+			type: 'options',
+			noDataExpression: true,
+			displayOptions,
+			options: [
+				{
+					name: 'Acknowledge Problem',
+					value: 'acknowledgeProblem',
+					description: 'POST /domain-types/acknowledge/collections/{host|service}',
+					action: 'Acknowledge a host or service problem',
+				},
+				{
+					name: 'Get Host Services',
+					value: 'getHostServices',
+					description: 'POST /domain-types/service/collections/all (GET on Checkmk < 2.4)',
+					action: 'Get the live status of every service on a host',
+				},
+				{
+					name: 'Schedule Downtime',
+					value: 'scheduleDowntime',
+					description: 'POST /domain-types/downtime/collections/{host|service}',
+					action: 'Schedule a host or service downtime',
+				},
+			],
+			default: 'getHostServices',
+		},
+		{
+			displayName: 'Host Name',
+			name: 'hostName',
+			type: 'string',
+			default: '',
+			required: true,
+			displayOptions,
+			description: 'Name of the host to act on',
+		},
+		{
+			displayName: 'Target',
+			name: 'target',
+			type: 'options',
+			default: 'host',
+			displayOptions: show(['acknowledgeProblem', 'scheduleDowntime']),
+			options: [
+				{name: 'Host', value: 'host'},
+				{name: 'Service', value: 'service'},
+			],
+			description: 'Whether the acknowledgement or downtime applies to the host or one of its services',
+		},
+		{
+			displayName: 'Service Description',
+			name: 'serviceDescription',
+			type: 'string',
+			default: '',
+			required: true,
+			displayOptions: show(['acknowledgeProblem'], {target: ['service']}),
+			description: 'Exact service description of the problem to acknowledge',
+		},
+		{
+			displayName: 'Service Descriptions',
+			name: 'serviceDescriptions',
+			type: 'string',
+			default: '',
+			required: true,
+			displayOptions: show(['scheduleDowntime'], {target: ['service']}),
+			description: 'Comma-separated service descriptions that receive the downtime',
+		},
+		{
+			displayName: 'Comment',
+			name: 'acknowledgementComment',
+			type: 'string',
+			default: '',
+			required: true,
+			displayOptions: show(['acknowledgeProblem']),
+			description: 'Comment stored with the acknowledgement',
+		},
+		{
+			displayName: 'Sticky',
+			name: 'sticky',
+			type: 'boolean',
+			default: true,
+			displayOptions: show(['acknowledgeProblem']),
+			description: 'Whether the acknowledgement survives a state change',
+		},
+		{
+			displayName: 'Persistent',
+			name: 'persistent',
+			type: 'boolean',
+			default: false,
+			displayOptions: show(['acknowledgeProblem']),
+			description: 'Whether the comment stays when the acknowledgement is removed',
+		},
+		{
+			displayName: 'Notify',
+			name: 'notify',
+			type: 'boolean',
+			default: true,
+			displayOptions: show(['acknowledgeProblem']),
+			description: 'Whether contacts are notified about the acknowledgement',
+		},
+		{
+			displayName: 'Expire On',
+			name: 'expireOn',
+			type: 'dateTime',
+			default: '',
+			displayOptions: show(['acknowledgeProblem']),
+			description: 'Optional ISO 8601 timestamp after which the acknowledgement expires',
+		},
+		{
+			displayName: 'Only Problems',
+			name: 'onlyProblems',
+			type: 'boolean',
+			default: false,
+			displayOptions: show(['getHostServices']),
+			description: 'Whether to return only services that are not OK',
+		},
+		{
+			displayName: 'Columns',
+			name: 'columns',
+			type: 'multiOptions',
+			default: [...SERVICE_COLUMNS],
+			options: SERVICE_COLUMN_OPTIONS.map(column => ({name: column, value: column})),
+			displayOptions: show(['getHostServices']),
+			description:
+				'Live status columns to return. Other columns can be requested through the Custom API resource.',
+		},
+		{
+			displayName: 'Start Time',
+			name: 'startTime',
+			type: 'dateTime',
+			default: '',
+			required: true,
+			displayOptions: show(['scheduleDowntime']),
+			description: 'ISO 8601 timestamp at which the downtime starts',
+		},
+		{
+			displayName: 'End Time',
+			name: 'endTime',
+			type: 'dateTime',
+			default: '',
+			required: true,
+			displayOptions: show(['scheduleDowntime']),
+			description: 'ISO 8601 timestamp at which the downtime ends',
+		},
+		{
+			displayName: 'Comment',
+			name: 'downtimeComment',
+			type: 'string',
+			default: '',
+			displayOptions: show(['scheduleDowntime']),
+			description: 'Optional comment stored with the downtime',
+		},
+	];
+}
+
 function customApiProperties(): INodeProperties[] {
 	const displayOptions = {show: {resource: [CUSTOM_API_RESOURCE]}};
 	return [
@@ -410,12 +574,12 @@ function customApiProperties(): INodeProperties[] {
 				'Path relative to the Checkmk API base, starting with "/"; absolute URLs are not allowed',
 		},
 		{
-			displayName: 'Query',
+			displayName: 'Query Parameters',
 			name: 'customQuery',
 			type: 'json',
 			default: EMPTY_JSON,
 			displayOptions,
-			description: 'Query parameters as a JSON object',
+			description: 'Query string parameters as a JSON object; array values are sent as repeated keys',
 		},
 		{
 			displayName: 'Headers',
@@ -427,12 +591,37 @@ function customApiProperties(): INodeProperties[] {
 				'Additional headers as a JSON object; Authorization, Host, Content-Length and Cookie cannot be overridden',
 		},
 		{
-			displayName: 'Body (JSON)',
+			displayName: 'Body Content Type',
+			name: 'customContentType',
+			type: 'options',
+			default: 'application/json',
+			displayOptions,
+			options: [
+				{name: 'JSON', value: 'application/json'},
+				{name: 'Form URL Encoded', value: 'application/x-www-form-urlencoded'},
+				{name: 'Text', value: 'text/plain'},
+			],
+			description: 'How the body is serialized before it is sent',
+		},
+		{
+			displayName: 'Body',
 			name: 'customBody',
 			type: 'json',
 			default: EMPTY_JSON,
 			displayOptions,
-			description: 'Request body as JSON; ignored for GET and DELETE when empty',
+			description: 'Request body; a JSON object for JSON and form content types, a JSON string for text. Ignored for GET and DELETE when empty.',
+		},
+		{
+			displayName: 'Response Format',
+			name: 'customResponseFormat',
+			type: 'options',
+			default: 'json',
+			displayOptions,
+			options: [
+				{name: 'JSON', value: 'json'},
+				{name: 'Text', value: 'text'},
+			],
+			description: 'Whether the response body is parsed as JSON or returned as plain text',
 		},
 		{
 			displayName: 'Return Full Response',
@@ -461,6 +650,7 @@ export function buildProperties(): INodeProperties[] {
 			noDataExpression: true,
 			options: [
 				...RESOURCES.map(resource => ({name: resource.label, value: resource.value})),
+				{name: 'Monitoring', value: MONITORING_RESOURCE},
 				{name: 'Live Status', value: LIVE_STATUS_RESOURCE},
 				{name: 'Custom API', value: CUSTOM_API_RESOURCE},
 			],
@@ -475,6 +665,26 @@ export function buildProperties(): INodeProperties[] {
 		properties.push(...operationFields(operation));
 	}
 
+	properties.push({
+		displayName: 'Extension Attributes',
+		name: 'extensionAttributes',
+		type: 'string',
+		default: '',
+		placeholder: 'tag_criticality,tag_location',
+		description: 'Comma-separated attribute names to keep inside attributes and effective_attributes; leave empty to return every attribute',
+	});
+	properties.push({
+		displayName: 'Include Live Status',
+		name: 'includeStatus',
+		type: 'boolean',
+		default: true,
+		displayOptions: {
+			show: {resource: ['hosts'], operation: [...HOST_CONFIG_STATUS_OPERATIONS]},
+		},
+		description: 'Whether to fetch the host live status and attach it as host_status',
+	});
+
+	properties.push(...monitoringProperties());
 	properties.push(...liveStatusProperties());
 	properties.push(...customApiProperties());
 	return properties;
