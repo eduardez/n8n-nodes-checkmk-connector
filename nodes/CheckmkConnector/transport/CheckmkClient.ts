@@ -40,6 +40,7 @@ export class CheckmkClient {
 	constructor(
 		private readonly context: IExecuteFunctions,
 		private readonly credentials: CheckmkCredentials,
+		private readonly siteOverride?: string,
 	) {}
 
 	buildUrl(path: string): string {
@@ -52,7 +53,7 @@ export class CheckmkClient {
 		}
 
 		const host = this.credentials.host.trim().replace(/\/+$/, '');
-		const site = this.credentials.site.trim().replace(/^\/+|\/+$/g, '');
+		const site = (this.siteOverride?.trim() || this.credentials.site).replace(/^\/+|\/+$/g, '');
 		const relative = path.replace(/^\/+/, '');
 		return `${host}/${encodeURIComponent(site)}/check_mk/api/${this.credentials.apiVersion}/${relative}`;
 	}

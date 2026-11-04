@@ -644,6 +644,15 @@ export function buildProperties(): INodeProperties[] {
 			default: '',
 		},
 		{
+			displayName: 'Site Override',
+			name: 'siteOverride',
+			type: 'string',
+			default: '',
+			placeholder: '{{$json.site}}',
+			description:
+				'Optional site name evaluated for each input item. When empty, the site from the credential is used.',
+		},
+		{
 			displayName: 'Resource',
 			name: 'resource',
 			type: 'options',
