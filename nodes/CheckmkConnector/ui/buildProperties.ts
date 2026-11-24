@@ -723,6 +723,21 @@ export function buildProperties(): INodeProperties[] {
 		},
 		description: 'Optional filter. True returns hosts with comments; false returns hosts without comments.',
 	});
+	properties.push({
+		displayName: 'Host Has Downtime',
+		name: 'hostDowntimeFilter',
+		type: 'options',
+		default: '',
+		options: [
+			{name: 'Any', value: ''},
+			{name: 'True - Has Downtime', value: 'true'},
+			{name: 'False - Has No Downtime', value: 'false'},
+		],
+		displayOptions: {
+			show: {resource: ['hosts'], operation: ['cmk.gui.openapi.endpoints.host_config.list_hosts']},
+		},
+		description: 'Optional filter. True returns hosts with downtime; false returns hosts without downtime.',
+	});
 
 	properties.push(...monitoringProperties());
 	properties.push(...liveStatusProperties());
