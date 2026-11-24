@@ -6,7 +6,7 @@ import {isLegacyStatusApi} from '../transport/compatibility';
 import type {CheckmkVersion} from '../transport/version';
 
 const HOST_STATUS_PATH = '/domain-types/host/collections/all';
-const HOST_COMMENTS_PATH = '/domain-types/comment/collections/hosts';
+const HOST_COMMENTS_PATH = '/domain-types/comment/collections/host';
 const SERVICE_STATUS_PATH = '/domain-types/service/collections/all';
 const HOST_COLUMNS = ['name', 'state', 'plugin_output', 'address', 'alias', 'last_check'];
 const SERVICE_COLUMNS = [
