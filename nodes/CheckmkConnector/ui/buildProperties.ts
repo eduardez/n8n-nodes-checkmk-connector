@@ -715,8 +715,8 @@ export function buildProperties(): INodeProperties[] {
 		default: '',
 		options: [
 			{name: 'Any', value: ''},
-			{name: 'True - has comment', value: 'true'},
-			{name: 'False - has no comment', value: 'false'},
+			{name: 'True - Has Comment', value: 'true'},
+			{name: 'False - Has No Comment', value: 'false'},
 		],
 		displayOptions: {
 			show: {resource: ['hosts'], operation: ['cmk.gui.openapi.endpoints.host_config.list_hosts']},
