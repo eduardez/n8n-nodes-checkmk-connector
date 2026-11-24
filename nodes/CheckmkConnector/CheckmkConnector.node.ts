@@ -129,11 +129,15 @@ export class CheckmkConnector implements INodeType {
 						throw new NodeOperationError(this.getNode(), `Unknown operation "${operationId}"`);
 					}
 					result = await executeCatalogOperation(this, client, itemIndex, operation, version);
-					if (
-						HOST_CONFIG_STATUS_OPERATIONS.has(operation.id) &&
-						Boolean(this.getNodeParameter('includeStatus', itemIndex, true))
-					) {
-						result = await attachHostStatus(client, version, result);
+					if (HOST_CONFIG_STATUS_OPERATIONS.has(operation.id)) {
+						const rawStates = this.getNodeParameter('hostStatusFilter', itemIndex, []);
+						const statusStates = (Array.isArray(rawStates) ? rawStates : [rawStates])
+							.map(value => String(value).trim())
+							.filter(value => ['0', '1', '2', '3'].includes(value));
+						const includeStatus = Boolean(this.getNodeParameter('includeStatus', itemIndex, true));
+						if (includeStatus || statusStates.length > 0) {
+							result = await attachHostStatus(client, version, result, statusStates);
+						}
 					}
 				}
 
