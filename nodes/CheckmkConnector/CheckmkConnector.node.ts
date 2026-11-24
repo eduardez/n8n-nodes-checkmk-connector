@@ -93,12 +93,16 @@ export class CheckmkConnector implements INodeType {
 		const credentials = (await this.getCredentials(
 			'checkmkConnectorApi',
 		)) as unknown as CheckmkCredentials;
-		const client = new CheckmkClient(this, credentials);
-		const version = await probeCheckmkVersion(this, client, credentials);
 		const returnData: INodeExecutionData[] = [];
 
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
+				const siteOverride = String(this.getNodeParameter('siteOverride', itemIndex, '')).trim();
+				const client = new CheckmkClient(this, credentials, siteOverride || undefined);
+				const version = await probeCheckmkVersion(this, client, {
+					...credentials,
+					site: siteOverride || credentials.site,
+				});
 				const resource = this.getNodeParameter('resource', itemIndex) as string;
 				let result: unknown;
 
