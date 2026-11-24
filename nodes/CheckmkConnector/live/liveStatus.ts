@@ -6,6 +6,7 @@ import {isLegacyStatusApi} from '../transport/compatibility';
 import type {CheckmkVersion} from '../transport/version';
 
 const HOST_STATUS_PATH = '/domain-types/host/collections/all';
+const HOST_COMMENTS_PATH = '/domain-types/comment/collections/hosts';
 const SERVICE_STATUS_PATH = '/domain-types/service/collections/all';
 const HOST_COLUMNS = ['name', 'state', 'plugin_output', 'address', 'alias', 'last_check'];
 const SERVICE_COLUMNS = [
@@ -232,6 +233,7 @@ export async function attachHostStatus(
 	version: CheckmkVersion | undefined,
 	configs: unknown,
 	statusStates: string[] = [],
+	commentFilter = '',
 ): Promise<unknown> {
 	const rows = Array.isArray(configs) ? configs : [configs];
 	if (rows.length === 0) return configs;
@@ -244,6 +246,26 @@ export async function attachHostStatus(
 		);
 	}
 	const items = await fetchStatus(client, version, HOST_STATUS_PATH, statusRequest);
+	const comments =
+		commentFilter === ''
+			? []
+			: await client.requestAll<StatusItem>(
+					{method: 'GET', path: HOST_COMMENTS_PATH},
+					true,
+					0,
+			  );
+	const hostsWithComments = new Set(
+		comments
+			.map(comment => {
+				const extensions = comment.extensions ?? {};
+				return typeof extensions.host_name === 'string'
+					? extensions.host_name
+					: typeof comment.host_name === 'string'
+						? comment.host_name
+						: undefined;
+			})
+			.filter((hostName): hostName is string => hostName !== undefined),
+	);
 	const statusByHost = new Map<string, StatusItem | undefined>();
 	for (const item of items) {
 		const name = typeof item.extensions?.name === 'string' ? item.extensions.name : item.id;
@@ -256,12 +278,18 @@ export async function attachHostStatus(
 		return {...config, host_status: normalizeStatusItem(statusByHost.get(hostName))};
 	});
 	const filtered =
-		statusStates.length === 0
+		statusStates.length === 0 && commentFilter === ''
 			? joined
 			: joined.filter(row => {
 					if (typeof row !== 'object' || row === null) return false;
 					const status = (row as {host_status?: {state?: unknown} | null}).host_status;
-					return status != null && statusStates.includes(String(status.state));
+					const hostName = String((row as {id?: unknown}).id ?? '');
+					const stateMatches =
+						statusStates.length === 0 || (status != null && statusStates.includes(String(status.state)));
+					const commentMatches =
+						commentFilter === '' ||
+						(commentFilter === 'true' ? hostsWithComments.has(hostName) : !hostsWithComments.has(hostName));
+					return stateMatches && commentMatches;
 				});
 	return Array.isArray(configs) ? filtered : filtered[0];
 }

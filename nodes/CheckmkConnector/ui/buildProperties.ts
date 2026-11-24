@@ -708,6 +708,21 @@ export function buildProperties(): INodeProperties[] {
 		},
 		description: 'Optional filter. Leave empty to return hosts in every state.',
 	});
+	properties.push({
+		displayName: 'Host Has Comment',
+		name: 'hostCommentFilter',
+		type: 'options',
+		default: '',
+		options: [
+			{name: 'Any', value: ''},
+			{name: 'True - Has Comment', value: 'true'},
+			{name: 'False - Has No Comment', value: 'false'},
+		],
+		displayOptions: {
+			show: {resource: ['hosts'], operation: ['cmk.gui.openapi.endpoints.host_config.list_hosts']},
+		},
+		description: 'Optional filter. True returns hosts with comments; false returns hosts without comments.',
+	});
 
 	properties.push(...monitoringProperties());
 	properties.push(...liveStatusProperties());
