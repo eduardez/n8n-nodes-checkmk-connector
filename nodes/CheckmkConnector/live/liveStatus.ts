@@ -249,7 +249,11 @@ export async function attachHostStatus(
 	const comments =
 		commentFilter === ''
 			? []
-			: statusItems(await client.request<unknown>({method: 'GET', path: HOST_COMMENTS_PATH}));
+			: await client.requestAll<StatusItem>(
+					{method: 'GET', path: HOST_COMMENTS_PATH},
+					true,
+					0,
+			  );
 	const hostsWithComments = new Set(
 		comments
 			.map(comment => {
