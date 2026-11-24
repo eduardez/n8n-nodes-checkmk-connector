@@ -692,6 +692,22 @@ export function buildProperties(): INodeProperties[] {
 		},
 		description: 'Whether to fetch the host live status and attach it as host_status',
 	});
+	properties.push({
+		displayName: 'Host Status Filter',
+		name: 'hostStatusFilter',
+		type: 'multiOptions',
+		default: [],
+		options: [
+			{name: '0 - OK', value: '0'},
+			{name: '1 - Critical', value: '1'},
+			{name: '2 - Warning', value: '2'},
+			{name: '3 - Unknown', value: '3'},
+		],
+		displayOptions: {
+			show: {resource: ['hosts'], operation: ['cmk.gui.openapi.endpoints.host_config.list_hosts']},
+		},
+		description: 'Optional filter. Leave empty to return hosts in every state.',
+	});
 
 	properties.push(...monitoringProperties());
 	properties.push(...liveStatusProperties());

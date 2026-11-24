@@ -231,11 +231,19 @@ export async function attachHostStatus(
 	client: CheckmkClient,
 	version: CheckmkVersion | undefined,
 	configs: unknown,
+	statusStates: string[] = [],
 ): Promise<unknown> {
 	const rows = Array.isArray(configs) ? configs : [configs];
 	if (rows.length === 0) return configs;
 
-	const items = await fetchStatus(client, version, HOST_STATUS_PATH, {columns: HOST_COLUMNS});
+	const statusRequest: Record<string, unknown> = {columns: HOST_COLUMNS};
+	if (statusStates.length > 0) {
+		const expressions = statusStates.map(state => ({op: '=', left: 'state', right: state}));
+		statusRequest.query = JSON.stringify(
+			expressions.length === 1 ? expressions[0] : {op: 'or', expr: expressions},
+		);
+	}
+	const items = await fetchStatus(client, version, HOST_STATUS_PATH, statusRequest);
 	const statusByHost = new Map<string, StatusItem | undefined>();
 	for (const item of items) {
 		const name = typeof item.extensions?.name === 'string' ? item.extensions.name : item.id;
@@ -247,7 +255,15 @@ export async function attachHostStatus(
 		const hostName = String((config as {id?: unknown}).id ?? '');
 		return {...config, host_status: normalizeStatusItem(statusByHost.get(hostName))};
 	});
-	return Array.isArray(configs) ? joined : joined[0];
+	const filtered =
+		statusStates.length === 0
+			? joined
+			: joined.filter(row => {
+					if (typeof row !== 'object' || row === null) return false;
+					const status = (row as {host_status?: {state?: unknown} | null}).host_status;
+					return status != null && statusStates.includes(String(status.state));
+				});
+	return Array.isArray(configs) ? filtered : filtered[0];
 }
 
 async function collectServices(
