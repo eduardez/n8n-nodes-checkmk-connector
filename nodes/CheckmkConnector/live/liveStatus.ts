@@ -7,6 +7,7 @@ import type {CheckmkVersion} from '../transport/version';
 
 const HOST_STATUS_PATH = '/domain-types/host/collections/all';
 const HOST_COMMENTS_PATH = '/domain-types/comment/collections/host';
+const HOST_DOWNTIMES_PATH = '/domain-types/downtime/collections/all';
 const SERVICE_STATUS_PATH = '/domain-types/service/collections/all';
 const HOST_COLUMNS = ['name', 'state', 'plugin_output', 'address', 'alias', 'last_check'];
 const SERVICE_COLUMNS = [
@@ -234,6 +235,7 @@ export async function attachHostStatus(
 	configs: unknown,
 	statusStates: string[] = [],
 	commentFilter = '',
+	downtimeFilter = '',
 ): Promise<unknown> {
 	const rows = Array.isArray(configs) ? configs : [configs];
 	if (rows.length === 0) return configs;
@@ -266,6 +268,26 @@ export async function attachHostStatus(
 			})
 			.filter((hostName): hostName is string => hostName !== undefined),
 	);
+	const downtimes =
+		downtimeFilter === ''
+			? []
+			: await client.requestAll<StatusItem>(
+					{method: 'GET', path: HOST_DOWNTIMES_PATH},
+					true,
+					0,
+			  );
+	const hostsWithDowntime = new Set(
+		downtimes
+			.map(downtime => {
+				const extensions = downtime.extensions ?? {};
+				return typeof extensions.host_name === 'string'
+					? extensions.host_name
+					: typeof downtime.host_name === 'string'
+						? downtime.host_name
+						: undefined;
+			})
+			.filter((hostName): hostName is string => hostName !== undefined),
+	);
 	const statusByHost = new Map<string, StatusItem | undefined>();
 	for (const item of items) {
 		const name = typeof item.extensions?.name === 'string' ? item.extensions.name : item.id;
@@ -278,7 +300,7 @@ export async function attachHostStatus(
 		return {...config, host_status: normalizeStatusItem(statusByHost.get(hostName))};
 	});
 	const filtered =
-		statusStates.length === 0 && commentFilter === ''
+		statusStates.length === 0 && commentFilter === '' && downtimeFilter === ''
 			? joined
 			: joined.filter(row => {
 					if (typeof row !== 'object' || row === null) return false;
@@ -289,7 +311,10 @@ export async function attachHostStatus(
 					const commentMatches =
 						commentFilter === '' ||
 						(commentFilter === 'true' ? hostsWithComments.has(hostName) : !hostsWithComments.has(hostName));
-					return stateMatches && commentMatches;
+					const downtimeMatches =
+						downtimeFilter === '' ||
+						(downtimeFilter === 'true' ? hostsWithDowntime.has(hostName) : !hostsWithDowntime.has(hostName));
+					return stateMatches && commentMatches && downtimeMatches;
 				});
 	return Array.isArray(configs) ? filtered : filtered[0];
 }

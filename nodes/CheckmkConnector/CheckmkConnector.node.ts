@@ -136,8 +136,16 @@ export class CheckmkConnector implements INodeType {
 							.filter(value => ['0', '1', '2', '3'].includes(value));
 						const includeStatus = Boolean(this.getNodeParameter('includeStatus', itemIndex, true));
 						const commentFilter = String(this.getNodeParameter('hostCommentFilter', itemIndex, ''));
-						if (includeStatus || statusStates.length > 0 || commentFilter !== '') {
-							result = await attachHostStatus(client, version, result, statusStates, commentFilter);
+						const downtimeFilter = String(this.getNodeParameter('hostDowntimeFilter', itemIndex, ''));
+						if (includeStatus || statusStates.length > 0 || commentFilter !== '' || downtimeFilter !== '') {
+							result = await attachHostStatus(
+								client,
+								version,
+								result,
+								statusStates,
+								commentFilter,
+								downtimeFilter,
+							);
 						}
 					}
 				}
