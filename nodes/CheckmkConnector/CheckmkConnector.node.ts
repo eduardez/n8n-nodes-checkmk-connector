@@ -135,8 +135,9 @@ export class CheckmkConnector implements INodeType {
 							.map(value => String(value).trim())
 							.filter(value => ['0', '1', '2', '3'].includes(value));
 						const includeStatus = Boolean(this.getNodeParameter('includeStatus', itemIndex, true));
-						if (includeStatus || statusStates.length > 0) {
-							result = await attachHostStatus(client, version, result, statusStates);
+						const commentFilter = String(this.getNodeParameter('hostCommentFilter', itemIndex, ''));
+						if (includeStatus || statusStates.length > 0 || commentFilter !== '') {
+							result = await attachHostStatus(client, version, result, statusStates, commentFilter);
 						}
 					}
 				}
